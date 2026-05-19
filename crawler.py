@@ -67,16 +67,16 @@ def save_stock_to_db(stock_data):
         print(f" 資料庫寫入失敗: {str(e)}")
 
 if __name__ == '__main__':
+    print("=== 開始執行台股個股爬蟲 ===")
+    
     with app.app_context():
         db.create_all()
         
-    print("=== 開始執行台股個股爬蟲 ===")
-    
-    target_stocks = ['2330', '0056']
-    
-    for stock_id in target_stocks:
-        print(f"\n正在爬取個股代號: {stock_id} ...")
-        result = crawl_yahoo_stock(stock_id)
-        save_stock_to_db(result)
+        target_stocks = ['2330', '0056']
+        
+        for stock_id in target_stocks:
+            print(f"\n正在爬取個股代號: {stock_id} ...")
+            result = crawl_yahoo_stock(stock_id)
+            save_stock_to_db(result)
         
     print("\n=== 爬蟲任務結束 ===")
