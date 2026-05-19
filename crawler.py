@@ -2,20 +2,16 @@ import os
 import requests
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from app import app, db
+from app import app, db, StockPrice
 
 load_dotenv()
 
-class StockPrice(db.Model):
-    __tablename__ = 'stock_prices'
-    id = db.Column(db.Integer, primary_key=True)
-    stock_id = db.Column(db.String(10), nullable=False)
-    stock_name = db.Column(db.String(50), nullable=False)
-    price = db.Column(db.Float, nullable=False)
-    created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
-
 def crawl_yahoo_stock(stock_id):
-    url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW"
+    if 'A' in stock_id or 'B' in stock_id:
+        url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TWO"
+    else:
+        url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW"
+        
     headers = {
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -72,7 +68,7 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         
-        target_stocks = ['2330', '0056']
+        target_stocks = ['2330', '2308', '0050', '00981A', '00403A', '006208']
         
         for stock_id in target_stocks:
             print(f"\n正在爬取個股代號: {stock_id} ...")

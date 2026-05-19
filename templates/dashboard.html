@@ -3,25 +3,133 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart-Trading Desk 智慧交易艙</title>
+    <title>Smart Trading Desk</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; background-color: #1e1e1e; color: #ffffff; margin: 20px; }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .card { background-color: #2d2d2d; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-        h1 { color: #00ff88; }
+        body {
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            background-color: #121214;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #00e676;
+            margin-bottom: 30px;
+        }
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 25px;
+        }
+        @media(min-width: 768px) {
+            .chart-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+        .chart-container {
+            background-color: #1e1e24;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+        }
+        h2 {
+            margin-top: 0;
+            font-size: 1.1rem;
+            color: #cfd8dc;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Smart-Trading Desk 智慧交易艙</h1>
-        <div class="card">
-            <h2>台股量化分析（準備中）</h2>
-            <p>目前監控標的：台積電 (2330)</p>
-        </div>
-        <div class="card">
-            <h2>Jetson 交易員狀態監控</h2>
-            <p>即時狀態：<span id="investor-status">等待硬體連線...</span></p>
-        </div>
+        <h1>Smart Trading Desk 智能儀表板</h1>
+        
+        <div class="chart-grid" id="dashboard-grid"></div>
     </div>
+
+    <script>
+        // 定義要顯示的 6 檔股票代號與對應的圖表顏色
+        const stockConfig = [
+            { id: '2330', color: '#00e676' },   // 台積電 - 鮮綠色
+            { id: '2308', color: '#ff9100' },   // 台達電 - 亮橘色
+            { id: '0050', color: '#0288d1' },   // 元大0050 - 科技藍
+            { id: '00981A', color: '#e040fb' }, // 00981A - 魅惑紫
+            { id: '00403A', color: '#00e5ff' }, // 00403A - 青綠色
+            { id: '006208', color: '#ff5252' }  // 富邦50 - 珊瑚紅
+        ];
+
+        function initDashboard() {
+            const grid = document.getElementById('dashboard-grid');
+            
+            // 1. 動態在網頁上建立 6 個圖表框架
+            stockConfig.forEach(stock => {
+                const html = `
+                    <div class="chart-container">
+                        <h2 id="title-${stock.id}">代號 (${stock.id}) 走勢載入中...</h2>
+                        <canvas id="chart-${stock.id}"></canvas>
+                    </div>
+                `;
+                grid.insertAdjacentHTML('beforeend', html);
+            });
+
+            // 2. 依序呼叫 API 讀取雲端資料庫數據並繪圖
+            stockConfig.forEach(stock => {
+                loadStockData(stock.id, `chart-${stock.id}`, `title-${stock.id}`, stock.color);
+            });
+        }
+
+        function createChart(canvasId, label, times, prices, color) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            return new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: times,
+                    datasets: [{
+                        label: label,
+                        data: prices,
+                        borderColor: color,
+                        backgroundColor: color + '1a',
+                        borderWidth: 2,
+                        tension: 0.2,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { grid: { color: '#2e2e38' }, ticks: { color: '#90a4ae' } },
+                        y: { grid: { color: '#2e2e38' }, ticks: { color: '#90a4ae' } }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#ffffff' } }
+                    }
+                }
+            });
+        }
+
+        function loadStockData(stockId, canvasId, titleId, color) {
+            fetch(`/api/stock/${stockId}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'success' && data.prices.length > 0) {
+                        document.getElementById(titleId).innerText = `${data.stock_name} (${data.stock_id}) 最新走勢`;
+                        createChart(canvasId, data.stock_name, data.times, data.prices, color);
+                    } else {
+                        document.getElementById(titleId).innerText = `代號 (${stockId}) 暫無資料，請先執行爬蟲`;
+                    }
+                })
+                .catch(err => {
+                    console.error('Error fetching stock data:', err);
+                    document.getElementById(titleId).innerText = '資料載入失敗';
+                });
+        }
+
+        window.onload = initDashboard;
+    </script>
 </body>
 </html>
