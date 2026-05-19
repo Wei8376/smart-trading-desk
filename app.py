@@ -28,7 +28,10 @@ class StockPrice(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     stock_id = db.Column(db.String(10), nullable=False)
     stock_name = db.Column(db.String(50), nullable=False)
-    price = db.Column(db.Float, nullable=False)
+    open_price = db.Column(db.Float, nullable=False)   # 開盤價
+    high_price = db.Column(db.Float, nullable=False)   # 最高價
+    low_price = db.Column(db.Float, nullable=False)    # 最低價
+    close_price = db.Column(db.Float, nullable=False)  # 收盤價
     created_at = db.Column(db.DateTime, default=db.func.current_timestamp())
 
 @app.route('/')
@@ -40,16 +43,24 @@ def get_stock_data(stock_id):
     try:
         records = StockPrice.query.filter_by(stock_id=stock_id).order_by(StockPrice.created_at.asc()).all()
         
-        prices = [r.price for r in records]
-        times = [r.created_at.strftime('%H:%M:%S') for r in records]
+        ohlc_data = []
+        for r in records:
+            ohlc_data.append({
+                # 確保只有 YYYY-MM-DD，絕對不要帶有任何空白或時分秒！
+                "t": r.created_at.strftime('%Y-%m-%d'), 
+                "o": r.open_price,
+                "h": r.high_price,
+                "l": r.low_price,
+                "c": r.close_price
+            })
+            
         stock_name = records[0].stock_name if records else "未知股票"
         
         return jsonify({
             "status": "success",
             "stock_id": stock_id,
             "stock_name": stock_name,
-            "prices": prices,
-            "times": times
+            "data": ohlc_data
         }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500

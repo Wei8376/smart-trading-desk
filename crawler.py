@@ -1,78 +1,78 @@
-import os
+import datetime
 import requests
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 from app import app, db, StockPrice
 
-load_dotenv()
-
-def crawl_yahoo_stock(stock_id):
-    if 'A' in stock_id or 'B' in stock_id:
-        url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TWO"
-    else:
-        url = f"https://tw.stock.yahoo.com/quote/{stock_id}.TW"
-        
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
+def run_official_twse_crawler():
+    # 我們的目標監控清單
+    stock_list = ['2330', '2308', '0050', '00981A', '00403A', '006208']
     
-    try:
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            print(f"[{stock_id}] 網頁請求失敗，狀態碼：{response.status_code}")
-            return None
-            
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        name_tag = soup.find('h1', class_='C($c-link-text)')
-        stock_name = name_tag.text.strip() if name_tag else "未知股票"
-        
-        price_tag = soup.find('span', class_=['Fz(32px)', 'Fw(b)'])
-        if not price_tag:
-            price_tags = soup.find_all('span', class_=lambda c: c and 'Fz(32px)' in c)
-            if price_tags:
-                price_tag = price_tags[0]
-                
-        if price_tag:
-            price_str = price_tag.text.replace(',', '').strip()
-            price = float(price_str)
-            return {"stock_id": stock_id, "stock_name": stock_name, "price": price}
-        else:
-            print(f"[{stock_id}] 找不到股價標籤")
-            return None
-            
-    except Exception as e:
-        print(f"[{stock_id}] 爬取過程發生錯誤: {str(e)}")
-        return None
+    # 全自動抓取執行當天（今天）的正確西元日期
+    today_date = datetime.date.today()
+    date_str_twse = today_date.strftime('%Y%m%d') # "20260519"
 
-def save_stock_to_db(stock_data):
-    if not stock_data:
-        return
-        
-    try:
-        new_price = StockPrice(
-            stock_id=stock_data['stock_id'],
-            stock_name=stock_data['stock_name'],
-            price=stock_data['price']
-        )
-        db.session.add(new_price)
-        db.session.commit()
-        print(f" 成功存入資料庫 - [{stock_data['stock_id']} {stock_data['stock_name']}] 當前股價: {stock_data['price']}")
-    except Exception as e:
-        db.session.rollback()
-        print(f" 資料庫寫入失敗: {str(e)}")
+    print(f"=== [系統啟動] 開始全自動抓取證交所官方 {today_date} 盤後大數據 ===")
+
+    with app.app_context():
+        for stock_id in stock_list:
+            # 證交所官方個股當日盤後精準 API
+            url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str_twse}&stockNo={stock_id}"
+            
+            try:
+                response = requests.get(url, timeout=10)
+                res_data = response.json()
+                
+                # 驗證證交所是否有成功回傳資料
+                if res_data.get('stat') != 'OK' or 'data' not in res_data:
+                    print(f" ⚠️ 代號 {stock_id}：證交所今日尚未公告或此個股無數據")
+                    continue
+                
+                # 自動從證交所標題拆解出正確的股票名稱
+                stock_name = res_data.get('title', '').split(' ')[2] if 'title' in res_data else "台灣個股"
+                
+                # 證交所的 data 陣列包含了當月所有的交易日，我們直接提取最後一筆（也就是今天最新收盤日）
+                latest_market_row = res_data['data'][-1]
+                
+                # 證交所官方欄位索引：[3]開盤價, [4]最高價, [5]最低價, [6]收盤價
+                # 清除可能夾帶的逗號（例如千元股的 1,000）並轉為浮點數
+                open_p = float(latest_market_row[3].replace(',', ''))
+                high_p = float(latest_market_row[4].replace(',', ''))
+                low_p = float(latest_market_row[5].replace(',', ''))
+                close_p = float(latest_market_row[6].replace(',', ''))
+                
+                # 檢查資料庫是否今天已經有這檔股票的紀錄了（避免重複塞入造成幽靈橫軸）
+                existing_record = StockPrice.query.filter_by(
+                    stock_id=stock_id, 
+                    created_at=datetime.datetime.combine(today_date, datetime.time(13, 30, 0))
+                ).first()
+                
+                if existing_record:
+                    # 如果今天抓過，直接更新它，確保數據絕對精準
+                    existing_record.open_price = open_p
+                    existing_record.high_price = high_p
+                    existing_record.low_price = low_p
+                    existing_record.close_price = close_p
+                    print(f" 🔄 數據更新 -> {stock_name} ({stock_id}) | 開:{open_p} 收:{close_p}")
+                else:
+                    # 如果今天還沒抓過，新建一筆紀錄
+                    new_record = StockPrice(
+                        stock_id=stock_id,
+                        stock_name=stock_name,
+                        open_price=open_p,
+                        high_price=high_p,
+                        low_price=low_p,
+                        close_price=close_p,
+                        created_at=datetime.datetime.combine(today_date, datetime.time(13, 30, 0))
+                    )
+                    db.session.add(new_record)
+                    print(f" 💾 新增存檔 -> {stock_name} ({stock_id}) | 開:{open_p} 收:{close_p}")
+                    
+                db.session.commit()
+                
+            except Exception as e:
+                db.session.rollback()
+                print(f" ❌ 處理代號 {stock_id} 時發生異常錯誤: {str(e)}")
+                
+        print("=== [大功告成] 全數監控股票官方真實數據自動同步完畢！ ===")
 
 if __name__ == '__main__':
-    print("=== 開始執行台股個股爬蟲 ===")
-    
-    with app.app_context():
-        db.create_all()
-        
-        target_stocks = ['2330', '2308', '0050', '00981A', '00403A', '006208']
-        
-        for stock_id in target_stocks:
-            print(f"\n正在爬取個股代號: {stock_id} ...")
-            result = crawl_yahoo_stock(stock_id)
-            save_stock_to_db(result)
-        
-    print("\n=== 爬蟲任務結束 ===")
+    run_official_twse_crawler()

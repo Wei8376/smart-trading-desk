@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Smart Trading Desk</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <title>Smart Trading Desk - 完美系K線</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <style>
         body {
             font-family: 'Helvetica Neue', Arial, sans-serif;
@@ -14,7 +14,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
         }
         h1 {
@@ -43,30 +43,34 @@
             font-size: 1.1rem;
             color: #cfd8dc;
         }
+        .note {
+            text-align: center;
+            color: #90a4ae;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Smart Trading Desk 智能儀表板</h1>
-        
+        <h1>Smart Trading Desk 智能 K 線儀表板</h1>
+        <div class="note">系統採用國際標準台股配色：收盤價低於開盤價必為綠色，收盤價高於開盤價必為紅色</div>
         <div class="chart-grid" id="dashboard-grid"></div>
     </div>
 
     <script>
-        // 定義要顯示的 6 檔股票代號與對應的圖表顏色
         const stockConfig = [
-            { id: '2330', color: '#00e676' },   // 台積電 - 鮮綠色
-            { id: '2308', color: '#ff9100' },   // 台達電 - 亮橘色
-            { id: '0050', color: '#0288d1' },   // 元大0050 - 科技藍
-            { id: '00981A', color: '#e040fb' }, // 00981A - 魅惑紫
-            { id: '00403A', color: '#00e5ff' }, // 00403A - 青綠色
-            { id: '006208', color: '#ff5252' }  // 富邦50 - 珊瑚紅
+            { id: '2330' },
+            { id: '2308' },
+            { id: '0050' },
+            { id: '00981A' },
+            { id: '00403A' },
+            { id: '006208' }
         ];
 
         function initDashboard() {
             const grid = document.getElementById('dashboard-grid');
-            
-            // 1. 動態在網頁上建立 6 個圖表框架
+            grid.innerHTML = ''; 
             stockConfig.forEach(stock => {
                 const html = `
                     <div class="chart-container">
@@ -76,59 +80,86 @@
                 `;
                 grid.insertAdjacentHTML('beforeend', html);
             });
-
-            // 2. 依序呼叫 API 讀取雲端資料庫數據並繪圖
             stockConfig.forEach(stock => {
-                loadStockData(stock.id, `chart-${stock.id}`, `title-${stock.id}`, stock.color);
+                loadStockData(stock.id, `chart-${stock.id}`, `title-${stock.id}`);
             });
         }
 
-        function createChart(canvasId, label, times, prices, color) {
+        function getCandleColor(d) {
+            return d.c >= d.o ? '#ff5252' : '#00e676';
+        }
+
+        const candlestickLinesPlugin = {
+            id: 'candlestickLines',
+            beforeDatasetsDraw(chart) {
+                const { ctx, scales: { x, y } } = chart;
+                const ohlcRawData = chart.options.plugins.candlestickLines.ohlcData;
+                chart.getDatasetMeta(0).data.forEach((bar, index) => {
+                    const raw = ohlcRawData[index];
+                    if (!raw) return;
+                    const xPos = bar.x;
+                    ctx.strokeStyle = getCandleColor(raw);
+                    ctx.lineWidth = 2; ctx.beginPath();
+                    ctx.moveTo(xPos, y.getPixelForValue(raw.h));
+                    ctx.lineTo(xPos, y.getPixelForValue(raw.l)); ctx.stroke();
+                });
+            }
+        };
+
+        function createCandlestickChart(canvasId, label, stockId, ohlcData) {
             const ctx = document.getElementById(canvasId).getContext('2d');
+            const barData = ohlcData.map(d => [Math.min(d.o, d.c), Math.max(d.o, d.c)]);
+            const timelineColors = ohlcData.map(d => getCandleColor(d));
+            const maxPrice = Math.max(...ohlcData.map(d => d.h));
+            const minPrice = Math.min(...ohlcData.map(d => d.l));
+            const padding = (maxPrice - minPrice) || (maxPrice * 0.05); 
+
             return new Chart(ctx, {
-                type: 'line',
+                type: 'bar',
                 data: {
-                    labels: times,
+                    labels: ohlcData.map(d => d.t),
                     datasets: [{
                         label: label,
-                        data: prices,
-                        borderColor: color,
-                        backgroundColor: color + '1a',
-                        borderWidth: 2,
-                        tension: 0.2,
-                        fill: true
+                        data: barData,
+                        backgroundColor: timelineColors,
+                        borderColor: timelineColors,
+                        borderWidth: 1, barThickness: 15
                     }]
                 },
                 options: {
                     responsive: true,
                     scales: {
                         x: { grid: { color: '#2e2e38' }, ticks: { color: '#90a4ae' } },
-                        y: { grid: { color: '#2e2e38' }, ticks: { color: '#90a4ae' } }
+                        y: { min: minPrice - padding, max: maxPrice + padding, grid: { color: '#2e2e38' }, ticks: { color: '#90a4ae' } }
                     },
                     plugins: {
-                        legend: { labels: { color: '#ffffff' } }
+                        legend: { labels: { color: '#ffffff' } },
+                        candlestickLines: { ohlcData: ohlcData, stockId: stockId },
+                        tooltip: {
+                            callbacks: {
+                                label: context => {
+                                    const raw = ohlcData[context.dataIndex];
+                                    return [`開盤價格: ${raw.o}`, `最高價格: ${raw.h}`, `最低價格: ${raw.l}`, `收盤價格: ${raw.c}`];
+                                }
+                            }
+                        }
                     }
-                }
+                },
+                plugins: [candlestickLinesPlugin]
             });
         }
 
-        function loadStockData(stockId, canvasId, titleId, color) {
+        function loadStockData(stockId, canvasId, titleId) {
             fetch(`/api/stock/${stockId}`)
-                .then(response => response.json())
-                .then(data => {
-                    if (data.status === 'success' && data.prices.length > 0) {
-                        document.getElementById(titleId).innerText = `${data.stock_name} (${data.stock_id}) 最新走勢`;
-                        createChart(canvasId, data.stock_name, data.times, data.prices, color);
+                .then(response => response.json()).then(data => {
+                    if (data.status === 'success' && data.data.length > 0) {
+                        document.getElementById(titleId).innerText = `${data.stock_name} (${data.stock_id}) 歷史K線`;
+                        createCandlestickChart(canvasId, data.stock_name, stockId, data.data);
                     } else {
-                        document.getElementById(titleId).innerText = `代號 (${stockId}) 暫無資料，請先執行爬蟲`;
+                        document.getElementById(titleId).innerText = `代號 (${stockId}) 暫無K線資料`;
                     }
-                })
-                .catch(err => {
-                    console.error('Error fetching stock data:', err);
-                    document.getElementById(titleId).innerText = '資料載入失敗';
-                });
+                }).catch(err => { document.getElementById(titleId).innerText = '資料載入失敗'; });
         }
-
         window.onload = initDashboard;
     </script>
 </body>
