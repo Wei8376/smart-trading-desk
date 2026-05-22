@@ -112,13 +112,6 @@ def get_stock_data(stock_id):
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-    app.run(debug=True, host='0.0.0.0', port=5000)
-    # === 隱藏開關：自動建置資料庫與爬蟲 ===
-
-
 import os
 import subprocess
 from flask import jsonify
@@ -131,3 +124,11 @@ def setup_and_crawl():
         return f"<pre>{output}</pre>"
     except Exception as e:
         return str(e)
+    
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True, host='0.0.0.0', port=5000)
+    # === 隱藏開關：自動建置資料庫與爬蟲 ===
+
+
