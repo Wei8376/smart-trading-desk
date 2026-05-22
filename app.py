@@ -116,3 +116,15 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     app.run(debug=True, host='0.0.0.0', port=5000)
+    # === 隱藏開關：自動建置資料庫與爬蟲 ===
+import os
+from flask import jsonify
+
+@app.route('/api/setup-and-crawl')
+def setup_and_crawl():
+    try:
+        db.create_all()
+        os.system('python crawler.py --backfill 4')
+        return jsonify({'status': 'success', 'message': 'Setup and crawl completed successfully.'})
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
