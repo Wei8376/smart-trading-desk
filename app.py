@@ -1,4 +1,5 @@
 import os
+from google import genai
 from flask import Flask, render_template, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
@@ -11,7 +12,14 @@ db_url = os.getenv("DATABASE_URL")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
 
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+import os
+
+db_url = os.getenv("DATABASE_URL")
+
+if db_url and db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url or 'sqlite:///smart_trading.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
@@ -37,6 +45,45 @@ class StockPrice(db.Model):
 @app.route('/')
 def dashboard():
     return render_template('dashboard.html')
+# 初始化 Gemini AI 用戶端 (會自動讀取 .env 裡的 GEMINI_API_KEY)
+ai_client = genai.Client()
+
+@app.route('/api/ai-analysis')
+def get_ai_analysis():
+    try:
+        # 從資料庫抓取最新的 6 筆數據（也就是今天我們關注的這 6 檔標的）
+        latest_prices = db.session.query(StockPrice).order_by(StockPrice.created_at.desc()).limit(6).all()
+        
+        if not latest_prices:
+            return jsonify({'status': 'error', 'message': '資料庫目前沒有數據，請先執行爬蟲抓取資料。'})
+            
+        # 把這 6 筆數據整理成文字，準備餵給 AI
+        data_summary = ""
+        for p in latest_prices:
+            data_summary += f"{p.stock_name} ({p.stock_id}): 開 {p.open_price} | 高 {p.high_price} | 低 {p.low_price} | 收 {p.close_price}\n"
+            
+        # 這是你身為工程師「詠唱」給 AI 的指令 (Prompt)
+        prompt = f"""
+        你是溫暖、專業的資深金融投資策略師。
+        請根據以下台股數據寫一篇 150-200 字的盤後智能心靈簡評。
+        要求：
+        1. 像對投資人說故事般解讀市場情緒，勿念流水帳。
+        2. 語氣溫暖，點評主動型基金的選股思維。
+        3. 結尾給予充滿人文氣息的鼓勵。
+        
+        {data_summary}
+        """
+        
+        # 呼叫 Gemini 產生內容
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        
+        return jsonify({'status': 'success', 'analysis': response.text})
+        
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)})
 
 @app.route('/api/stock/<stock_id>', methods=['GET'])
 def get_stock_data(stock_id):
@@ -66,4 +113,6 @@ def get_stock_data(stock_id):
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True, host='0.0.0.0', port=5000)

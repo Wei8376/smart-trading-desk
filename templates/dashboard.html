@@ -54,6 +54,51 @@
 <body>
     <div class="container">
         <h1>Smart Trading Desk 智能 K 線儀表板</h1>
+        <div class="chart-container" style="margin-bottom: 25px; border: 1px solid #00e676; border-radius: 12px; padding: 20px; background-color: #1a1a1c;">
+        <h2 style="color: #00e676; display: flex; align-items: center; gap: 10px; margin-top: 0;">
+            ✨ AI 盤後智能大腦分析
+        </h2>
+        <p id="ai-text" style="color: #cfd8dc; line-height: 1.6; min-height: 50px; font-size: 16px;">
+            點擊下方按鈕，產生最具人文氣息的市場故事解讀...
+        </p>
+        <button id="ai-btn" onclick="fetchAIAnalysis()" style="background: #00e676; color: #121214; border: none; padding: 12px 24px; border-radius: 8px; font-weight: bold; cursor: pointer; font-size: 15px; transition: 0.3s;">
+            🔮 產生今日 AI 盤後分析
+        </button>
+    </div>
+
+    <script>
+    function fetchAIAnalysis() {
+        const btn = document.getElementById('ai-btn');
+        const textZone = document.getElementById('ai-text');
+        
+        // 點擊後改變按鈕狀態，避免重複點擊
+        btn.innerText = '✨ 靈感構思中...';
+        btn.disabled = true;
+        textZone.innerText = 'AI 正在為您撰寫盤後故事...';
+        textZone.style.color = '#81c784';
+        
+        fetch('/api/ai-analysis')
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    // 成功時，顯示 AI 寫的文章
+                    textZone.innerHTML = data.analysis.replace(/\n/g, '<br>');
+                    textZone.style.color = '#fff';
+                } else {
+                    textZone.innerText = '分析失敗：' + data.message;
+                    textZone.style.color = '#ff5252';
+                }
+                btn.innerText = '🔄 重新產生';
+                btn.disabled = false;
+            })
+            .catch(err => {
+                textZone.innerText = '連線異常，請確認伺服器與網路狀態。';
+                textZone.style.color = '#ff5252';
+                btn.innerText = '🔄 重新產生';
+                btn.disabled = false;
+            });
+    }
+    </script>
         <div class="note">系統採用國際標準台股配色：收盤價低於開盤價必為綠色，收盤價高於開盤價必為紅色</div>
         <div class="chart-grid" id="dashboard-grid"></div>
     </div>
