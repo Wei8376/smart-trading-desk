@@ -1,7 +1,7 @@
 import os
 import sys
-import requests
 from datetime import datetime, timedelta
+import yfinance as yf
 from app import app, db, StockPrice
 
 STOCKS = {
@@ -13,62 +13,15 @@ STOCKS = {
     "00403A": "主動統一升級50"
 }
 
-def fetch_twse_data(date_str):
-    url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={date_str}&type=ALLBUT0999&response=json"
+def save_row_to_db(sid, op, hi, lo, cl, target_date):
     try:
-        response = requests.get(url, timeout=15)
-        if response.status_code != 200:
-            return None
-        data = response.json()
-        if data.get("stat") != "OK":
-            return None
-        return data
-    except Exception:
-        return None
-
-def parse_and_save(data, date_str):
-    target_date = datetime.strptime(date_str, "%Y%m%d").date()
-    any_saved = False
-    
-    # 擴大搜尋範圍 (tables 7 到 10)，防禦證交所隨意更動表格順序
-    for table_idx in range(7, 11):
-        if "tables" in data and len(data["tables"]) > table_idx:
-            table = data["tables"][table_idx]
-            fields = table.get("fields", [])
-            table_data = table.get("data", [])
-            
-            try:
-                # 尋找必須的欄位
-                id_idx = fields.index("證券代號")
-                open_idx = fields.index("開盤價")
-                high_idx = fields.index("最高價")
-                low_idx = fields.index("最低價")
-                close_idx = fields.index("收盤價")
-                
-                # 如果欄位都齊全，就開始比對資料
-                for row in table_data:
-                    sid = row[id_idx].strip()
-                    if sid in STOCKS:
-                        # 只要有任何一筆成功寫入，就標記為 True
-                        if save_row_to_db(sid, row, open_idx, high_idx, low_idx, close_idx, target_date):
-                            any_saved = True
-            except ValueError:
-                # 如果這個表格缺少某些欄位 (例如沒有開盤價)，直接跳過，不引發 Rollback
-                continue
-                
-    return any_saved
-
-def save_row_to_db(sid, row, open_idx, high_idx, low_idx, close_idx, target_date):
-    try:
-        # 清理字串中的逗號並轉為浮點數
-        op = float(row[open_idx].replace(',', '').strip())
-        hi = float(row[high_idx].replace(',', '').strip())
-        lo = float(row[low_idx].replace(',', '').strip())
-        cl = float(row[close_idx].replace(',', '').strip())
+        op = float(op)
+        hi = float(hi)
+        lo = float(lo)
+        cl = float(cl)
     except ValueError:
         return False
 
-    # 檢查是否已經存在 (使用正確的 created_at 欄位)
     exists = StockPrice.query.filter_by(stock_id=sid, created_at=target_date).first()
     if not exists:
         new_price = StockPrice(
@@ -86,14 +39,26 @@ def save_row_to_db(sid, row, open_idx, high_idx, low_idx, close_idx, target_date
     return False
 
 def run_crawler(target_date_str):
-    print(f"🚀 開始檢查 {target_date_str} 證交所官方數據...")
-    json_data = fetch_twse_data(target_date_str)
-    if not json_data:
-        print(f" 提示：{target_date_str} 未取得資料")
-        return False
-        
+    print(f"🚀 開始檢查 {target_date_str} 數據...")
+    target_date = datetime.strptime(target_date_str, "%Y%m%d").date()
+    next_date = target_date + timedelta(days=1)
+    
+    any_saved = False
+    
     with app.app_context():
-        any_saved = parse_and_save(json_data, target_date_str)
+        for sid in STOCKS.keys():
+            yf_symbol = f"{sid}.TW"
+            try:
+                ticker = yf.Ticker(yf_symbol)
+                hist = ticker.history(start=target_date.strftime("%Y-%m-%d"), end=next_date.strftime("%Y-%m-%d"))
+                
+                if not hist.empty:
+                    row = hist.iloc[0]
+                    if save_row_to_db(sid, row['Open'], row['High'], row['Low'], row['Close'], target_date):
+                        any_saved = True
+            except Exception:
+                continue
+                
         if any_saved:
             db.session.commit()
             print(f" ✅ 成功：{target_date_str} 數據已確實 Commit 同步至資料庫！")
@@ -118,7 +83,6 @@ if __name__ == "__main__":
     else:
         print("⚡ 啟動日常智能同步模式...")
         today = datetime.today()
-        # 檢查過去三天
         for i in range(2, -1, -1):
             check_date_str = (today - timedelta(days=i)).strftime("%Y%m%d")
             run_crawler(check_date_str)
