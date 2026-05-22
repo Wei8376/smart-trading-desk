@@ -1,78 +1,125 @@
-import datetime
+import os
+import sys
 import requests
+from datetime import datetime, timedelta
 from app import app, db, StockPrice
 
-def run_official_twse_crawler():
-    # 我們的目標監控清單
-    stock_list = ['2330', '2308', '0050', '00981A', '00403A', '006208']
+STOCKS = {
+    "2330": "台積電",
+    "2308": "台達電",
+    "0050": "元大台灣50",
+    "006208": "富邦台50",
+    "00981A": "主動統一台股增長",
+    "00403A": "主動統一升級50"
+}
+
+def fetch_twse_data(date_str):
+    url = f"https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date={date_str}&type=ALLBUT0999&response=json"
+    try:
+        response = requests.get(url, timeout=15)
+        if response.status_code != 200:
+            return None
+        data = response.json()
+        if data.get("stat") != "OK":
+            return None
+        return data
+    except Exception:
+        return None
+
+def parse_and_save(data, date_str):
+    target_date = datetime.strptime(date_str, "%Y%m%d").date()
+    any_saved = False
     
-    # 全自動抓取執行當天（今天）的正確西元日期
-    today_date = datetime.date.today()
-    date_str_twse = today_date.strftime('%Y%m%d') # "20260519"
-
-    print(f"=== [系統啟動] 開始全自動抓取證交所官方 {today_date} 盤後大數據 ===")
-
-    with app.app_context():
-        for stock_id in stock_list:
-            # 證交所官方個股當日盤後精準 API
-            url = f"https://www.twse.com.tw/exchangeReport/STOCK_DAY?response=json&date={date_str_twse}&stockNo={stock_id}"
+    # 擴大搜尋範圍 (tables 7 到 10)，防禦證交所隨意更動表格順序
+    for table_idx in range(7, 11):
+        if "tables" in data and len(data["tables"]) > table_idx:
+            table = data["tables"][table_idx]
+            fields = table.get("fields", [])
+            table_data = table.get("data", [])
             
             try:
-                response = requests.get(url, timeout=10)
-                res_data = response.json()
+                # 尋找必須的欄位
+                id_idx = fields.index("證券代號")
+                open_idx = fields.index("開盤價")
+                high_idx = fields.index("最高價")
+                low_idx = fields.index("最低價")
+                close_idx = fields.index("收盤價")
                 
-                # 驗證證交所是否有成功回傳資料
-                if res_data.get('stat') != 'OK' or 'data' not in res_data:
-                    print(f" ⚠️ 代號 {stock_id}：證交所今日尚未公告或此個股無數據")
-                    continue
+                # 如果欄位都齊全，就開始比對資料
+                for row in table_data:
+                    sid = row[id_idx].strip()
+                    if sid in STOCKS:
+                        # 只要有任何一筆成功寫入，就標記為 True
+                        if save_row_to_db(sid, row, open_idx, high_idx, low_idx, close_idx, target_date):
+                            any_saved = True
+            except ValueError:
+                # 如果這個表格缺少某些欄位 (例如沒有開盤價)，直接跳過，不引發 Rollback
+                continue
                 
-                # 自動從證交所標題拆解出正確的股票名稱
-                stock_name = res_data.get('title', '').split(' ')[2] if 'title' in res_data else "台灣個股"
-                
-                # 證交所的 data 陣列包含了當月所有的交易日，我們直接提取最後一筆（也就是今天最新收盤日）
-                latest_market_row = res_data['data'][-1]
-                
-                # 證交所官方欄位索引：[3]開盤價, [4]最高價, [5]最低價, [6]收盤價
-                # 清除可能夾帶的逗號（例如千元股的 1,000）並轉為浮點數
-                open_p = float(latest_market_row[3].replace(',', ''))
-                high_p = float(latest_market_row[4].replace(',', ''))
-                low_p = float(latest_market_row[5].replace(',', ''))
-                close_p = float(latest_market_row[6].replace(',', ''))
-                
-                # 檢查資料庫是否今天已經有這檔股票的紀錄了（避免重複塞入造成幽靈橫軸）
-                existing_record = StockPrice.query.filter_by(
-                    stock_id=stock_id, 
-                    created_at=datetime.datetime.combine(today_date, datetime.time(13, 30, 0))
-                ).first()
-                
-                if existing_record:
-                    # 如果今天抓過，直接更新它，確保數據絕對精準
-                    existing_record.open_price = open_p
-                    existing_record.high_price = high_p
-                    existing_record.low_price = low_p
-                    existing_record.close_price = close_p
-                    print(f" 🔄 數據更新 -> {stock_name} ({stock_id}) | 開:{open_p} 收:{close_p}")
-                else:
-                    # 如果今天還沒抓過，新建一筆紀錄
-                    new_record = StockPrice(
-                        stock_id=stock_id,
-                        stock_name=stock_name,
-                        open_price=open_p,
-                        high_price=high_p,
-                        low_price=low_p,
-                        close_price=close_p,
-                        created_at=datetime.datetime.combine(today_date, datetime.time(13, 30, 0))
-                    )
-                    db.session.add(new_record)
-                    print(f" 💾 新增存檔 -> {stock_name} ({stock_id}) | 開:{open_p} 收:{close_p}")
-                    
-                db.session.commit()
-                
-            except Exception as e:
-                db.session.rollback()
-                print(f" ❌ 處理代號 {stock_id} 時發生異常錯誤: {str(e)}")
-                
-        print("=== [大功告成] 全數監控股票官方真實數據自動同步完畢！ ===")
+    return any_saved
 
-if __name__ == '__main__':
-    run_official_twse_crawler()
+def save_row_to_db(sid, row, open_idx, high_idx, low_idx, close_idx, target_date):
+    try:
+        # 清理字串中的逗號並轉為浮點數
+        op = float(row[open_idx].replace(',', '').strip())
+        hi = float(row[high_idx].replace(',', '').strip())
+        lo = float(row[low_idx].replace(',', '').strip())
+        cl = float(row[close_idx].replace(',', '').strip())
+    except ValueError:
+        return False
+
+    # 檢查是否已經存在 (使用正確的 created_at 欄位)
+    exists = StockPrice.query.filter_by(stock_id=sid, created_at=target_date).first()
+    if not exists:
+        new_price = StockPrice(
+            stock_id=sid,
+            stock_name=STOCKS[sid],
+            created_at=target_date,
+            open_price=op,
+            high_price=hi,
+            low_price=lo,
+            close_price=cl
+        )
+        db.session.add(new_price)
+        print(f" 💾 成功匯入 -> {STOCKS[sid]} ({sid}) | 日期: {target_date}")
+        return True
+    return False
+
+def run_crawler(target_date_str):
+    print(f"🚀 開始檢查 {target_date_str} 證交所官方數據...")
+    json_data = fetch_twse_data(target_date_str)
+    if not json_data:
+        print(f" 提示：{target_date_str} 未取得資料")
+        return False
+        
+    with app.app_context():
+        any_saved = parse_and_save(json_data, target_date_str)
+        if any_saved:
+            db.session.commit()
+            print(f" ✅ 成功：{target_date_str} 數據已確實 Commit 同步至資料庫！")
+        else:
+            db.session.rollback()
+            print(f" 狀態：{target_date_str} 資料庫已有資料或無新數據，跳過。")
+        return True
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--backfill":
+        try:
+            days_to_backfill = int(sys.argv[2])
+            print(f"🔄 啟動自訂歷史回溯：準備檢查過去 {days_to_backfill} 天的資料...")
+            end_date = datetime.today()
+            for i in range(days_to_backfill, -1, -1):
+                current_check_date = (end_date - timedelta(days=i)).strftime("%Y%m%d")
+                run_crawler(current_check_date)
+            print(" 歷史回溯結束！")
+        except ValueError:
+            print("❌ 參數錯誤！")
+            
+    else:
+        print("⚡ 啟動日常智能同步模式...")
+        today = datetime.today()
+        # 檢查過去三天
+        for i in range(2, -1, -1):
+            check_date_str = (today - timedelta(days=i)).strftime("%Y%m%d")
+            run_crawler(check_date_str)
+        print(" 數據同步檢索完成！")
